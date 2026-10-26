@@ -1,19 +1,36 @@
 import {
-  Body, Controller, Get, Header, Param, ParseIntPipe, Patch, Post, Query, StreamableFile,
+  Body,
+  Controller,
+  Get,
+  Header,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  StreamableFile,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators';
 import { EstadoEntrega } from '../common/enums';
 import { AuthUser } from '../common/interfaces/auth-user';
 import {
-  ActualizarEncomiendaDto, AsignarSalidaDto, CobrarDto, CreateEncomiendaDto, EntregarDto,
-} from './encomiendas.dto';
+  ActualizarEncomiendaDto,
+  AsignarSalidaDto,
+  CobrarDto,
+  CreateEncomiendaDto,
+  EntregarDto,
+} from './dto/encomiendas.dto';
 import { EncomiendasService } from './encomiendas.service';
 
 @Controller('encomiendas')
+@ApiTags('Encomiendas')
+@ApiBearerAuth('bearer')
 export class EncomiendasController {
   constructor(private readonly service: EncomiendasService) {}
 
   @Get()
+  @ApiOperation({ summary: 'Listar encomiendas con filtros' })
   list(
     @Query('q') q?: string,
     @Query('estado') estado?: EstadoEntrega,
@@ -22,45 +39,87 @@ export class EncomiendasController {
     @Query('oficinaDestino') oficinaDestino?: string,
   ) {
     return this.service.list({
-      q, estado, oficinaDestino,
+      q,
+      estado,
+      oficinaDestino,
       salidaId: salidaId ? +salidaId : undefined,
       pendientePago: pendientePago === 'true',
     });
   }
 
   @Get('buscar')
-  buscar(@Query('q') q = '') { return q.trim() ? this.service.buscar(q) : []; }
+  @ApiOperation({ summary: 'Buscar encomiendas' })
+  buscar(@Query('q') q = '') {
+    return q.trim() ? this.service.buscar(q) : [];
+  }
 
-  @Get(':id') findOne(@Param('id', ParseIntPipe) id: number) { return this.service.findOne(id); }
+  @Get(':id')
+  @ApiOperation({ summary: 'Consultar encomienda' })
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.service.findOne(id);
+  }
 
-  @Post() create(@Body() dto: CreateEncomiendaDto, @CurrentUser() u: AuthUser) { return this.service.create(dto, u); }
+  @Post()
+  @ApiOperation({ summary: 'Registrar encomienda' })
+  create(@Body() dto: CreateEncomiendaDto, @CurrentUser() u: AuthUser) {
+    return this.service.create(dto, u);
+  }
 
   @Patch(':id')
-  actualizar(@Param('id', ParseIntPipe) id: number, @Body() dto: ActualizarEncomiendaDto, @CurrentUser() u: AuthUser) {
+  @ApiOperation({ summary: 'Actualizar encomienda' })
+  actualizar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ActualizarEncomiendaDto,
+    @CurrentUser() u: AuthUser,
+  ) {
     return this.service.actualizar(id, dto, u);
   }
 
   @Post(':id/asignar-salida')
-  asignar(@Param('id', ParseIntPipe) id: number, @Body() dto: AsignarSalidaDto, @CurrentUser() u: AuthUser) {
+  @ApiOperation({ summary: 'Asignar encomienda a una salida' })
+  asignar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AsignarSalidaDto,
+    @CurrentUser() u: AuthUser,
+  ) {
     return this.service.asignarSalida(id, dto.salidaId, u);
   }
 
   @Post(':id/cobrar')
-  cobrar(@Param('id', ParseIntPipe) id: number, @Body() dto: CobrarDto, @CurrentUser() u: AuthUser) {
+  @ApiOperation({ summary: 'Cobrar encomienda' })
+  cobrar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CobrarDto,
+    @CurrentUser() u: AuthUser,
+  ) {
     return this.service.cobrar(id, dto, u);
   }
 
   @Post(':id/marcar-listo')
-  listo(@Param('id', ParseIntPipe) id: number, @CurrentUser() u: AuthUser) { return this.service.marcarListo(id, u); }
+  @ApiOperation({ summary: 'Marcar encomienda como lista para entrega' })
+  listo(@Param('id', ParseIntPipe) id: number, @CurrentUser() u: AuthUser) {
+    return this.service.marcarListo(id, u);
+  }
 
   @Post(':id/entregar')
-  entregar(@Param('id', ParseIntPipe) id: number, @Body() dto: EntregarDto, @CurrentUser() u: AuthUser) {
+  @ApiOperation({ summary: 'Registrar entrega de encomienda' })
+  entregar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EntregarDto,
+    @CurrentUser() u: AuthUser,
+  ) {
     return this.service.entregar(id, dto, u);
   }
 
   @Get(':id/etiqueta/escpos')
+  @ApiOperation({ summary: 'Descargar etiqueta ESC/POS' })
   @Header('Content-Type', 'application/octet-stream')
-  async etiqueta(@Param('id', ParseIntPipe) id: number, @Query('columnas') columnas?: string) {
-    return new StreamableFile(await this.service.etiquetaEscPos(id, columnas ? +columnas : 32));
+  async etiqueta(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('columnas') columnas?: string,
+  ) {
+    return new StreamableFile(
+      await this.service.etiquetaEscPos(id, columnas ? +columnas : 32),
+    );
   }
 }

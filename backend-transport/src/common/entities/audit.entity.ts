@@ -5,7 +5,7 @@ import {
   ManyToOne,
   UpdateDateColumn,
 } from 'typeorm';
-import { Usuario } from '../../usuarios/usuario.entity';
+import { Usuario } from '../../usuarios/entities/usuario.entity';
 
 /** Campos de auditoría comunes (created_at/by, updated_at/by). */
 export abstract class AuditEntity {

@@ -1,4 +1,3 @@
-import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
@@ -30,23 +29,12 @@ import { UsuariosModule } from './usuarios/usuarios.module';
         type: 'postgres' as const,
         host: cfg.get<string>('DB_HOST') ?? 'localhost',
         port: Number(cfg.get('DB_PORT') ?? 5432),
-        username: cfg.get<string>('DB_USER') ?? 'transport',
+        username: cfg.get<string>('DB_USERNAME') ?? 'transport',
         password: cfg.get<string>('DB_PASSWORD') ?? 'transport',
         database: cfg.get<string>('DB_NAME') ?? 'transport',
         autoLoadEntities: true,
         // En producción use migraciones y DB_SYNCHRONIZE=false
         synchronize: (cfg.get('DB_SYNCHRONIZE') ?? 'true') === 'true',
-      }),
-    }),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => ({
-        connection: {
-          host: cfg.get('REDIS_HOST') ?? 'localhost',
-          port: Number(cfg.get('REDIS_PORT') ?? 6379),
-          password: cfg.get('REDIS_PASSWORD') || undefined,
-          maxRetriesPerRequest: null,
-        },
       }),
     }),
     UsuariosModule,

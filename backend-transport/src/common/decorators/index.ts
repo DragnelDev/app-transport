@@ -1,4 +1,8 @@
-import { createParamDecorator, ExecutionContext, SetMetadata } from '@nestjs/common';
+import {
+  createParamDecorator,
+  ExecutionContext,
+  SetMetadata,
+} from '@nestjs/common';
 import { AuthUser, Rol } from '../interfaces/auth-user';
 
 export const IS_PUBLIC = 'isPublic';

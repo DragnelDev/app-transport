@@ -1,14 +1,20 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import { Repository } from 'typeorm';
 import { AuthUser } from '../common/interfaces/auth-user';
-import { CreateUsuarioDto, UpdateUsuarioDto } from './usuarios.dto';
-import { Usuario } from './usuario.entity';
+import { CreateUsuarioDto, UpdateUsuarioDto } from './dto/usuarios.dto';
+import { Usuario } from './entities/usuario.entity';
 
 @Injectable()
 export class UsuariosService {
-  constructor(@InjectRepository(Usuario) private readonly repo: Repository<Usuario>) {}
+  constructor(
+    @InjectRepository(Usuario) private readonly repo: Repository<Usuario>,
+  ) {}
 
   toAuthUser(u: Usuario): AuthUser {
     return {
@@ -55,8 +61,13 @@ export class UsuariosService {
   async update(id: number, dto: UpdateUsuarioDto, actor: AuthUser) {
     const u = await this.repo.findOne({ where: { id } });
     if (!u) throw new NotFoundException('Usuario no encontrado');
-    if (id === actor.id && (dto.activo === false || (dto.rol && dto.rol !== u.rol))) {
-      throw new ConflictException('No puede desactivarse ni cambiar su propio rol');
+    if (
+      id === actor.id &&
+      (dto.activo === false || (dto.rol && dto.rol !== u.rol))
+    ) {
+      throw new ConflictException(
+        'No puede desactivarse ni cambiar su propio rol',
+      );
     }
     const { password, ...resto } = dto;
     Object.assign(u, resto);

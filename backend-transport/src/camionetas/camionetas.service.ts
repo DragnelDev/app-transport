@@ -1,16 +1,25 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuthUser } from '../common/interfaces/auth-user';
-import { Camioneta } from './camioneta.entity';
-import { CreateCamionetaDto, UpdateCamionetaDto } from './camionetas.dto';
+import { Camioneta } from './entities/camioneta.entity';
+import { CreateCamionetaDto, UpdateCamionetaDto } from './dto/camionetas.dto';
 
 @Injectable()
 export class CamionetasService {
-  constructor(@InjectRepository(Camioneta) private readonly repo: Repository<Camioneta>) {}
+  constructor(
+    @InjectRepository(Camioneta) private readonly repo: Repository<Camioneta>,
+  ) {}
 
   findAll(soloActivas = false) {
-    return this.repo.find({ where: soloActivas ? { activa: true } : {}, order: { placa: 'ASC' } });
+    return this.repo.find({
+      where: soloActivas ? { activa: true } : {},
+      order: { placa: 'ASC' },
+    });
   }
 
   async findOne(id: number) {
@@ -21,7 +30,8 @@ export class CamionetasService {
 
   async create(dto: CreateCamionetaDto, user: AuthUser) {
     const placa = dto.placa.trim().toUpperCase();
-    if (await this.repo.exists({ where: { placa } })) throw new ConflictException('La placa ya está registrada');
+    if (await this.repo.exists({ where: { placa } }))
+      throw new ConflictException('La placa ya está registrada');
     return this.repo.save(
       this.repo.create({
         ...dto,
@@ -40,7 +50,8 @@ export class CamionetasService {
     if (dto.placa) {
       dto.placa = dto.placa.trim().toUpperCase();
       const otra = await this.repo.findOne({ where: { placa: dto.placa } });
-      if (otra && otra.id !== id) throw new ConflictException('La placa ya está registrada');
+      if (otra && otra.id !== id)
+        throw new ConflictException('La placa ya está registrada');
     }
     Object.assign(c, dto, { updatedBy: user.id });
     return this.repo.save(c);

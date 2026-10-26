@@ -1,28 +1,31 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 import { TipoNotificacion } from '../common/enums';
 import { normalizarTelefono } from '../common/utils/phone';
-import { Notificacion } from './notificacion.entity';
-
+import { Notificacion } from './entities/notificacion.entity';
 export const WHATSAPP_QUEUE = 'whatsapp';
+
+const ENVIO_PAUSADO = 'Envío desactivado temporalmente: Redis no está en uso.';
 
 @Injectable()
 export class NotificacionesService {
   private readonly logger = new Logger(NotificacionesService.name);
 
   constructor(
-    @InjectRepository(Notificacion) private readonly repo: Repository<Notificacion>,
-    @InjectQueue(WHATSAPP_QUEUE) private readonly queue: Queue,
+    @InjectRepository(Notificacion)
+    private readonly repo: Repository<Notificacion>,
     private readonly cfg: ConfigService,
   ) {}
 
   /**
-   * Registra la notificación y la encola. Nunca lanza: un fallo de mensajería
-   * no debe interrumpir una venta o un cambio de estado.
+   * Registra la notificación como fallida mientras el envío por Redis está pausado.
    */
   async encolar(
     tipo: TipoNotificacion,
@@ -30,32 +33,26 @@ export class NotificacionesService {
     mensaje: string,
     ref?: { tipo: string; id: number },
   ) {
-    const telefono = normalizarTelefono(telefonoRaw, this.cfg.get('DEFAULT_COUNTRY_CODE') ?? '591');
+    const telefono = normalizarTelefono(
+      telefonoRaw,
+      this.cfg.get('DEFAULT_COUNTRY_CODE') ?? '591',
+    );
     if (!telefono) return null;
     const notif = await this.repo.save(
       this.repo.create({
         tipo,
         telefono,
         mensaje,
+        estado: 'Fallido',
+        error: ENVIO_PAUSADO,
         referenciaTipo: ref?.tipo ?? null,
         referenciaId: ref?.id ?? null,
       }),
     );
-    await this.publicar(notif);
+    this.logger.warn(
+      `Notificación ${notif.id} guardada sin enviar: Redis está desactivado.`,
+    );
     return notif;
-  }
-
-  private async publicar(n: Notificacion) {
-    try {
-      await this.queue.add(
-        'enviar',
-        { notificacionId: n.id },
-        { attempts: 5, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: 500, removeOnFail: 1000 },
-      );
-    } catch (err) {
-      this.logger.error(`No se pudo encolar la notificación ${n.id}: ${(err as Error).message}`);
-      await this.repo.update(n.id, { estado: 'Fallido', error: `Cola no disponible: ${(err as Error).message}` });
-    }
   }
 
   list(estado?: string) {
@@ -69,8 +66,8 @@ export class NotificacionesService {
   async reintentar(id: number) {
     const n = await this.repo.findOne({ where: { id } });
     if (!n) throw new NotFoundException('Notificación no encontrada');
-    await this.repo.update(id, { estado: 'Pendiente', error: null });
-    await this.publicar(n);
-    return this.repo.findOne({ where: { id } });
+    throw new ServiceUnavailableException(
+      `No se puede reintentar la notificación ${n.id}: Redis está desactivado temporalmente.`,
+    );
   }
 }

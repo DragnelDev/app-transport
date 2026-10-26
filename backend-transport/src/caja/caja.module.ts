@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { CierreCaja } from './cierre-caja.entity';
+import { CierreCaja } from './entities/cierre-caja.entity';
 import { CajaController } from './caja.controller';
 import { CajaService } from './caja.service';
 

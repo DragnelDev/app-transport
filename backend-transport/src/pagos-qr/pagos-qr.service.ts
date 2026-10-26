@@ -15,7 +15,7 @@ import { EntityManager, LessThan, Repository } from 'typeorm';
 import { EstadoPagoQr } from '../common/enums';
 import { AuthUser } from '../common/interfaces/auth-user';
 import { EventsGateway } from '../events/events.gateway';
-import { PagoQr } from './pago-qr.entity';
+import { PagoQr } from './entities/pago-qr.entity';
 import { HttpQrProvider } from './providers/http.provider';
 import { MockQrProvider } from './providers/mock.provider';
 import { QrProvider } from './providers/qr-provider';
@@ -35,12 +35,18 @@ export class PagosQrService implements OnModuleInit, OnModuleDestroy {
     this.modo = cfg.get('PAYMENT_PROVIDER') ?? 'mock';
     this.provider =
       this.modo === 'http'
-        ? new HttpQrProvider(cfg.getOrThrow('PAYMENT_API_URL'), cfg.getOrThrow('PAYMENT_API_KEY'))
+        ? new HttpQrProvider(
+            cfg.getOrThrow('PAYMENT_API_URL'),
+            cfg.getOrThrow('PAYMENT_API_KEY'),
+          )
         : new MockQrProvider();
   }
 
   onModuleInit() {
-    this.timer = setInterval(() => this.expirarVencidos().catch(() => undefined), 60_000);
+    this.timer = setInterval(
+      () => this.expirarVencidos().catch(() => undefined),
+      60_000,
+    );
     this.timer.unref();
   }
 
@@ -83,11 +89,17 @@ export class PagosQrService implements OnModuleInit, OnModuleDestroy {
 
   async expirarVencidos() {
     const vencidos = await this.repo.find({
-      where: { estado: EstadoPagoQr.Pendiente, fechaExpiracion: LessThan(new Date()) },
+      where: {
+        estado: EstadoPagoQr.Pendiente,
+        fechaExpiracion: LessThan(new Date()),
+      },
     });
     for (const p of vencidos) {
       await this.repo.update(p.id, { estado: EstadoPagoQr.Expirado });
-      this.events.emit('pago:actualizado', { id: p.id, estado: EstadoPagoQr.Expirado });
+      this.events.emit('pago:actualizado', {
+        id: p.id,
+        estado: EstadoPagoQr.Expirado,
+      });
     }
   }
 
@@ -96,21 +108,30 @@ export class PagosQrService implements OnModuleInit, OnModuleDestroy {
   private verificarFirma(rawBody: Buffer | undefined, firma?: string) {
     const secreto = this.cfg.get<string>('PAYMENT_WEBHOOK_SECRET');
     if (!secreto) {
-      if (this.modo !== 'mock') throw new ForbiddenException('Webhook sin secreto configurado');
+      if (this.modo !== 'mock')
+        throw new ForbiddenException('Webhook sin secreto configurado');
       return;
     }
     if (!rawBody || !firma) throw new UnauthorizedException('Firma requerida');
-    const esperado = createHmac('sha256', secreto).update(rawBody).digest('hex');
+    const esperado = createHmac('sha256', secreto)
+      .update(rawBody)
+      .digest('hex');
     const recibido = firma.replace(/^sha256=/, '');
     const a = Buffer.from(esperado);
     const b = Buffer.from(recibido);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) throw new UnauthorizedException('Firma inválida');
+    if (a.length !== b.length || !timingSafeEqual(a, b))
+      throw new UnauthorizedException('Firma inválida');
   }
 
-  async procesarWebhook(rawBody: Buffer | undefined, firma: string | undefined, body: any) {
+  async procesarWebhook(
+    rawBody: Buffer | undefined,
+    firma: string | undefined,
+    body: any,
+  ) {
     this.verificarFirma(rawBody, firma);
     const evento = this.provider.parsearWebhook(body);
-    if (!evento.transaccionId && !evento.referencia) throw new BadRequestException('Webhook sin identificador');
+    if (!evento.transaccionId && !evento.referencia)
+      throw new BadRequestException('Webhook sin identificador');
 
     const pago = await this.repo.findOne({
       where: evento.transaccionId
@@ -118,12 +139,18 @@ export class PagosQrService implements OnModuleInit, OnModuleDestroy {
         : { referencia: evento.referencia! },
     });
     if (!pago) throw new NotFoundException('Transacción desconocida');
-    if (pago.estado === EstadoPagoQr.Completado) return { ok: true, duplicado: true };
+    if (pago.estado === EstadoPagoQr.Completado)
+      return { ok: true, duplicado: true };
 
     if (!evento.pagado) {
       pago.estado = EstadoPagoQr.Fallido;
-    } else if (evento.monto !== undefined && Math.abs(evento.monto - pago.monto) > 0.009) {
-      this.logger.warn(`Monto inconsistente en pago ${pago.id}: esperado ${pago.monto}, recibido ${evento.monto}`);
+    } else if (
+      evento.monto !== undefined &&
+      Math.abs(evento.monto - pago.monto) > 0.009
+    ) {
+      this.logger.warn(
+        `Monto inconsistente en pago ${pago.id}: esperado ${pago.monto}, recibido ${evento.monto}`,
+      );
       pago.estado = EstadoPagoQr.Fallido;
     } else {
       pago.estado = EstadoPagoQr.Completado;
@@ -136,9 +163,11 @@ export class PagosQrService implements OnModuleInit, OnModuleDestroy {
 
   /** Solo con proveedor mock: simula que el cliente pagó desde su app bancaria. */
   async simular(id: number) {
-    if (this.modo !== 'mock') throw new ForbiddenException('Disponible solo con PAYMENT_PROVIDER=mock');
+    if (this.modo !== 'mock')
+      throw new ForbiddenException('Disponible solo con PAYMENT_PROVIDER=mock');
     const p = await this.obtener(id);
-    if (p.estado !== EstadoPagoQr.Pendiente) throw new BadRequestException(`El pago está ${p.estado}`);
+    if (p.estado !== EstadoPagoQr.Pendiente)
+      throw new BadRequestException(`El pago está ${p.estado}`);
     p.estado = EstadoPagoQr.Completado;
     p.fechaConfirmacion = new Date();
     await this.repo.save(p);
@@ -151,14 +180,22 @@ export class PagosQrService implements OnModuleInit, OnModuleDestroy {
    * lo marca como utilizado dentro de la transacción del llamador.
    */
   async consumir(em: EntityManager, pagoQrId: number, monto: number) {
-    const pago = await em.findOne(PagoQr, { where: { id: pagoQrId }, lock: { mode: 'pessimistic_write' } });
+    const pago = await em.findOne(PagoQr, {
+      where: { id: pagoQrId },
+      lock: { mode: 'pessimistic_write' },
+    });
     if (!pago) throw new BadRequestException('Pago QR inexistente');
     if (pago.estado !== EstadoPagoQr.Completado) {
-      throw new BadRequestException('El pago QR aún no está confirmado por el banco');
+      throw new BadRequestException(
+        'El pago QR aún no está confirmado por el banco',
+      );
     }
-    if (pago.utilizado) throw new BadRequestException('Este pago QR ya fue utilizado');
+    if (pago.utilizado)
+      throw new BadRequestException('Este pago QR ya fue utilizado');
     if (Math.abs(pago.monto - monto) > 0.009) {
-      throw new BadRequestException(`El monto del QR (Bs ${pago.monto}) no coincide con el cobro (Bs ${monto})`);
+      throw new BadRequestException(
+        `El monto del QR (Bs ${pago.monto}) no coincide con el cobro (Bs ${monto})`,
+      );
     }
     pago.utilizado = true;
     await em.save(pago);

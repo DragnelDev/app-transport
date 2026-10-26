@@ -20,16 +20,19 @@ import { EventsGateway } from '../events/events.gateway';
 import { Mensajes } from '../notificaciones/mensajes';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PagosQrService } from '../pagos-qr/pagos-qr.service';
-import { Salida } from '../salidas/salida.entity';
+import { Salida } from '../salidas/entities/salida.entity';
+import { Encomienda } from './entities/encomienda.entity';
 import {
   ActualizarEncomiendaDto,
   CobrarDto,
   CreateEncomiendaDto,
   EntregarDto,
-} from './encomiendas.dto';
-import { Encomienda } from './encomienda.entity';
-
-const REL = { salida: { ruta: true, camioneta: true }, creador: true, modificador: true } as const;
+} from './dto/encomiendas.dto';
+const REL = {
+  salida: { ruta: true, camioneta: true },
+  creador: true,
+  modificador: true,
+} as const;
 
 @Injectable()
 export class EncomiendasService implements OnModuleInit {
@@ -42,11 +45,15 @@ export class EncomiendasService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.ds.query('CREATE SEQUENCE IF NOT EXISTS seq_encomienda_guia START 1000');
+    await this.ds.query(
+      'CREATE SEQUENCE IF NOT EXISTS seq_encomienda_guia START 1000',
+    );
   }
 
   private async nuevoCodigo(em: EntityManager) {
-    const [{ n }] = await em.query("SELECT nextval('seq_encomienda_guia') AS n");
+    const [{ n }] = await em.query(
+      "SELECT nextval('seq_encomienda_guia') AS n",
+    );
     return `ENC-${new Date().getFullYear()}-${String(n).padStart(4, '0')}`;
   }
 
@@ -68,10 +75,12 @@ export class EncomiendasService implements OnModuleInit {
       .orderBy('e.id', 'DESC')
       .take(300);
 
-    if (f.estado) qb.andWhere('e.estado_entrega = :estado', { estado: f.estado });
+    if (f.estado)
+      qb.andWhere('e.estado_entrega = :estado', { estado: f.estado });
     if (f.salidaId) qb.andWhere('e.salida_id = :sid', { sid: f.salidaId });
     if (f.pendientePago) qb.andWhere('e.pagado = false');
-    if (f.oficinaDestino) qb.andWhere('e.oficina_destino ILIKE :od', { od: f.oficinaDestino });
+    if (f.oficinaDestino)
+      qb.andWhere('e.oficina_destino ILIKE :od', { od: f.oficinaDestino });
     if (f.q) {
       qb.andWhere(
         new Brackets((w) => {
@@ -103,19 +112,25 @@ export class EncomiendasService implements OnModuleInit {
 
   async create(dto: CreateEncomiendaDto, user: AuthUser) {
     if (dto.tipoPago === TipoPagoEncomienda.Origen && !dto.metodoPago) {
-      throw new BadRequestException('Indique el método de pago (Efectivo o QR)');
+      throw new BadRequestException(
+        'Indique el método de pago (Efectivo o QR)',
+      );
     }
 
     const id = await this.ds.transaction(async (em) => {
       let salida: Salida | null = null;
       if (dto.salidaId) {
-        salida = await em.findOne(Salida, { where: { id: dto.salidaId }, relations: { ruta: true } });
+        salida = await em.findOne(Salida, {
+          where: { id: dto.salidaId },
+          relations: { ruta: true },
+        });
         this.validarSalidaAsignable(salida);
       }
 
       const pagaEnOrigen = dto.tipoPago === TipoPagoEncomienda.Origen;
       if (pagaEnOrigen && dto.metodoPago === MetodoPago.QR) {
-        if (!dto.pagoQrId) throw new BadRequestException('Debe generar y confirmar el pago QR');
+        if (!dto.pagoQrId)
+          throw new BadRequestException('Debe generar y confirmar el pago QR');
         await this.pagos.consumir(em, dto.pagoQrId, dto.montoCobrado);
       }
 
@@ -137,7 +152,10 @@ export class EncomiendasService implements OnModuleInit {
         montoCobrado: dto.montoCobrado,
         tipoPago: dto.tipoPago,
         metodoPago: pagaEnOrigen ? dto.metodoPago! : null,
-        pagoQrId: pagaEnOrigen && dto.metodoPago === MetodoPago.QR ? dto.pagoQrId! : null,
+        pagoQrId:
+          pagaEnOrigen && dto.metodoPago === MetodoPago.QR
+            ? dto.pagoQrId!
+            : null,
         pagado: pagaEnOrigen,
         pagadoAt: pagaEnOrigen ? new Date() : null,
         pagadoBy: pagaEnOrigen ? user.id : null,
@@ -154,7 +172,8 @@ export class EncomiendasService implements OnModuleInit {
 
   async actualizar(id: number, dto: ActualizarEncomiendaDto, user: AuthUser) {
     const e = await this.findOne(id);
-    if (e.estadoEntrega === EstadoEntrega.Entregado) throw new ConflictException('La encomienda ya fue entregada');
+    if (e.estadoEntrega === EstadoEntrega.Entregado)
+      throw new ConflictException('La encomienda ya fue entregada');
     Object.assign(e, dto, { updatedBy: user.id });
     await this.repo.save(e);
     return this.findOne(id);
@@ -164,34 +183,52 @@ export class EncomiendasService implements OnModuleInit {
 
   private validarSalidaAsignable(salida: Salida | null) {
     if (!salida) throw new NotFoundException('Salida no encontrada');
-    if (![EstadoSalida.Programado, EstadoSalida.EnTrayecto].includes(salida.estado)) {
-      throw new BadRequestException(`La salida está "${salida.estado}" y no admite encomiendas`);
+    if (
+      ![EstadoSalida.Programado, EstadoSalida.EnTrayecto].includes(
+        salida.estado,
+      )
+    ) {
+      throw new BadRequestException(
+        `La salida está "${salida.estado}" y no admite encomiendas`,
+      );
     }
   }
 
   async asignarSalida(id: number, salidaId: number, user: AuthUser) {
     const e = await this.findOne(id);
     if (e.estadoEntrega !== EstadoEntrega.EnOrigen) {
-      throw new ConflictException('Solo se puede asignar una encomienda que sigue en la oficina de origen');
+      throw new ConflictException(
+        'Solo se puede asignar una encomienda que sigue en la oficina de origen',
+      );
     }
-    const salida = await this.ds.getRepository(Salida).findOne({ where: { id: salidaId }, relations: { ruta: true } });
+    const salida = await this.ds
+      .getRepository(Salida)
+      .findOne({ where: { id: salidaId }, relations: { ruta: true } });
     this.validarSalidaAsignable(salida);
 
     e.salidaId = salidaId;
     e.oficinaDestino = e.oficinaDestino ?? salida!.ruta!.destino;
     e.updatedBy = user.id;
-    if (salida!.estado === EstadoSalida.EnTrayecto) e.estadoEntrega = EstadoEntrega.EnViaje;
+    if (salida!.estado === EstadoSalida.EnTrayecto)
+      e.estadoEntrega = EstadoEntrega.EnViaje;
     await this.repo.save(e);
 
-    if (e.estadoEntrega === EstadoEntrega.EnViaje) await this.notificarSalida(e);
+    if (e.estadoEntrega === EstadoEntrega.EnViaje)
+      await this.notificarSalida(e);
     this.events.emit('encomienda:actualizada', { id });
     return this.findOne(id);
   }
 
-  private async registrarCobro(em: EntityManager, e: Encomienda, dto: CobrarDto, user: AuthUser) {
+  private async registrarCobro(
+    em: EntityManager,
+    e: Encomienda,
+    dto: CobrarDto,
+    user: AuthUser,
+  ) {
     if (e.pagado) throw new ConflictException('La encomienda ya está cobrada');
     if (dto.metodoPago === MetodoPago.QR) {
-      if (!dto.pagoQrId) throw new BadRequestException('Debe generar y confirmar el pago QR');
+      if (!dto.pagoQrId)
+        throw new BadRequestException('Debe generar y confirmar el pago QR');
       await this.pagos.consumir(em, dto.pagoQrId, e.montoCobrado);
       e.pagoQrId = dto.pagoQrId;
     }
@@ -204,7 +241,10 @@ export class EncomiendasService implements OnModuleInit {
 
   async cobrar(id: number, dto: CobrarDto, user: AuthUser) {
     await this.ds.transaction(async (em) => {
-      const e = await em.findOne(Encomienda, { where: { id }, lock: { mode: 'pessimistic_write' } });
+      const e = await em.findOne(Encomienda, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!e) throw new NotFoundException('Encomienda no encontrada');
       await this.registrarCobro(em, e, dto, user);
       await em.save(e);
@@ -216,7 +256,9 @@ export class EncomiendasService implements OnModuleInit {
   async marcarListo(id: number, user: AuthUser) {
     const e = await this.findOne(id);
     if (e.estadoEntrega !== EstadoEntrega.EnViaje) {
-      throw new ConflictException('Solo una encomienda "En Carga/Viaje" puede marcarse como lista en destino');
+      throw new ConflictException(
+        'Solo una encomienda "En Carga/Viaje" puede marcarse como lista en destino',
+      );
     }
     e.estadoEntrega = EstadoEntrega.ListoDestino;
     e.updatedBy = user.id;
@@ -228,16 +270,28 @@ export class EncomiendasService implements OnModuleInit {
 
   async entregar(id: number, dto: EntregarDto, user: AuthUser) {
     await this.ds.transaction(async (em) => {
-      const e = await em.findOne(Encomienda, { where: { id }, lock: { mode: 'pessimistic_write' } });
+      const e = await em.findOne(Encomienda, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!e) throw new NotFoundException('Encomienda no encontrada');
       if (e.estadoEntrega !== EstadoEntrega.ListoDestino) {
-        throw new ConflictException('La encomienda debe estar "Listo en Oficina Destino" para entregarse');
+        throw new ConflictException(
+          'La encomienda debe estar "Listo en Oficina Destino" para entregarse',
+        );
       }
       if (!e.pagado) {
         if (!dto.metodoPago) {
-          throw new BadRequestException('Pago contra entrega: debe cobrar antes de entregar el paquete');
+          throw new BadRequestException(
+            'Pago contra entrega: debe cobrar antes de entregar el paquete',
+          );
         }
-        await this.registrarCobro(em, e, { metodoPago: dto.metodoPago, pagoQrId: dto.pagoQrId }, user);
+        await this.registrarCobro(
+          em,
+          e,
+          { metodoPago: dto.metodoPago, pagoQrId: dto.pagoQrId },
+          user,
+        );
       }
       e.estadoEntrega = EstadoEntrega.Entregado;
       e.entregadoAt = new Date();
@@ -260,21 +314,41 @@ export class EncomiendasService implements OnModuleInit {
   // ------------- transiciones disparadas por el estado de la salida -------------
 
   /** Llamado por SalidasService al cambiar el estado de un viaje. */
-  async avanzarPorSalida(salidaId: number, estado: EstadoSalida, userId: number) {
+  async avanzarPorSalida(
+    salidaId: number,
+    estado: EstadoSalida,
+    userId: number,
+  ) {
     if (estado === EstadoSalida.EnTrayecto) {
-      const lote = await this.repo.find({ where: { salidaId, estadoEntrega: EstadoEntrega.EnOrigen } });
+      const lote = await this.repo.find({
+        where: { salidaId, estadoEntrega: EstadoEntrega.EnOrigen },
+      });
       for (const e of lote) {
-        await this.repo.update(e.id, { estadoEntrega: EstadoEntrega.EnViaje, updatedBy: userId });
+        await this.repo.update(e.id, {
+          estadoEntrega: EstadoEntrega.EnViaje,
+          updatedBy: userId,
+        });
         await this.notificarSalida(e);
       }
     } else if (estado === EstadoSalida.Finalizado) {
-      const lote = await this.repo.find({ where: { salidaId, estadoEntrega: EstadoEntrega.EnViaje } });
+      const lote = await this.repo.find({
+        where: { salidaId, estadoEntrega: EstadoEntrega.EnViaje },
+      });
       for (const e of lote) {
-        await this.repo.update(e.id, { estadoEntrega: EstadoEntrega.ListoDestino, updatedBy: userId });
-        await this.notificarLista({ ...e, estadoEntrega: EstadoEntrega.ListoDestino });
+        await this.repo.update(e.id, {
+          estadoEntrega: EstadoEntrega.ListoDestino,
+          updatedBy: userId,
+        });
+        await this.notificarLista({
+          ...e,
+          estadoEntrega: EstadoEntrega.ListoDestino,
+        });
       }
     } else if (estado === EstadoSalida.Cancelado) {
-      await this.repo.update({ salidaId, estadoEntrega: EstadoEntrega.EnOrigen }, { salidaId: null, updatedBy: userId });
+      await this.repo.update(
+        { salidaId, estadoEntrega: EstadoEntrega.EnOrigen },
+        { salidaId: null, updatedBy: userId },
+      );
     }
     this.events.emit('encomienda:actualizada', { salidaId });
   }
@@ -302,7 +376,12 @@ export class EncomiendasService implements OnModuleInit {
   async etiquetaEscPos(id: number, columnas = 32) {
     const e = await this.findOne(id);
     const p = new EscPos(columnas);
-    p.align('center').bold(true).size(true).text(e.codigoGuia).size(false).bold(false);
+    p.align('center')
+      .bold(true)
+      .size(true)
+      .text(e.codigoGuia)
+      .size(false)
+      .bold(false);
     p.qr(e.codigoGuia, 7).align('left').line();
     p.text(`De: ${e.remitenteNombre}`);
     p.text(`Para: ${e.destinatarioNombre}`);
@@ -310,7 +389,9 @@ export class EncomiendasService implements OnModuleInit {
     p.text(`Destino: ${e.oficinaDestino ?? '-'}`);
     p.text(`Bultos: ${e.cantidadBultos}`);
     p.line();
-    p.bold(true).text(e.pagado ? 'PAGADO' : `COBRAR Bs ${e.montoCobrado.toFixed(2)}`).bold(false);
+    p.bold(true)
+      .text(e.pagado ? 'PAGADO' : `COBRAR Bs ${e.montoCobrado.toFixed(2)}`)
+      .bold(false);
     return p.cut().build();
   }
 }

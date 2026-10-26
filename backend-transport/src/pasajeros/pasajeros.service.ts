@@ -14,9 +14,9 @@ import { EventsGateway } from '../events/events.gateway';
 import { Mensajes } from '../notificaciones/mensajes';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PagosQrService } from '../pagos-qr/pagos-qr.service';
-import { Salida } from '../salidas/salida.entity';
-import { Pasajero } from './pasajero.entity';
-import { ActualizarPasajeroDto, VenderPasajeDto } from './pasajeros.dto';
+import { Salida } from '../salidas/entities/salida.entity';
+import { Pasajero } from './entities/pasajero.entity';
+import { ActualizarPasajeroDto, VenderPasajeDto } from './dto/pasajeros.dto';
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -31,7 +31,10 @@ export class PasajerosService {
     private readonly cfg: ConfigService,
   ) {}
 
-  async list(params: { salidaId?: number; q?: string; anulados?: boolean }, user: AuthUser) {
+  async list(
+    params: { salidaId?: number; q?: string; anulados?: boolean },
+    user: AuthUser,
+  ) {
     const base: any = params.salidaId ? { salidaId: params.salidaId } : {};
     const where = params.q
       ? [
@@ -70,7 +73,10 @@ export class PasajerosService {
 
   private async lockSalida(em: EntityManager, id: number): Promise<Salida> {
     // Bloqueo por fila: serializa ventas concurrentes de una misma salida
-    const s = await em.findOne(Salida, { where: { id }, lock: { mode: 'pessimistic_write' } });
+    const s = await em.findOne(Salida, {
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
+    });
     if (!s) throw new NotFoundException('Salida no encontrada');
     return s;
   }
@@ -80,18 +86,31 @@ export class PasajerosService {
       .transaction(async (em) => {
         const salida = await this.lockSalida(em, dto.salidaId);
         if (salida.estado !== EstadoSalida.Programado) {
-          throw new BadRequestException(`No se pueden vender pasajes: la salida está "${salida.estado}"`);
+          throw new BadRequestException(
+            `No se pueden vender pasajes: la salida está "${salida.estado}"`,
+          );
         }
         this.validarAsiento(salida, dto.numeroAsiento);
 
-        const ocupado = await em.exists(Pasajero, { where: { salidaId: salida.id, numeroAsiento: dto.numeroAsiento } });
-        if (ocupado) throw new ConflictException(`El asiento ${dto.numeroAsiento} ya está ocupado`);
+        const ocupado = await em.exists(Pasajero, {
+          where: { salidaId: salida.id, numeroAsiento: dto.numeroAsiento },
+        });
+        if (ocupado)
+          throw new ConflictException(
+            `El asiento ${dto.numeroAsiento} ya está ocupado`,
+          );
 
-        const ruta = await em.findOneOrFail(Salida, { where: { id: salida.id }, relations: { ruta: true } });
+        const ruta = await em.findOneOrFail(Salida, {
+          where: { id: salida.id },
+          relations: { ruta: true },
+        });
         const monto = dto.montoPago ?? ruta.ruta!.tarifaBase;
 
         if (dto.metodoPago === MetodoPago.QR) {
-          if (!dto.pagoQrId) throw new BadRequestException('Debe generar y confirmar el pago QR');
+          if (!dto.pagoQrId)
+            throw new BadRequestException(
+              'Debe generar y confirmar el pago QR',
+            );
           await this.pagos.consumir(em, dto.pagoQrId, monto);
         }
 
@@ -112,7 +131,10 @@ export class PasajerosService {
         );
       })
       .catch((err) => {
-        if (err?.code === UNIQUE_VIOLATION) throw new ConflictException('El asiento ya fue vendido por otra operadora');
+        if (err?.code === UNIQUE_VIOLATION)
+          throw new ConflictException(
+            'El asiento ya fue vendido por otra operadora',
+          );
         throw err;
       });
 
@@ -141,16 +163,28 @@ export class PasajerosService {
     const salidaId = await this.ds.transaction(async (em) => {
       const actual = await em.findOne(Pasajero, { where: { id } });
       if (!actual) throw new NotFoundException('Pasaje no encontrado');
-      if (actual.cierreCajaId) throw new ConflictException('El pasaje pertenece a una caja ya cerrada');
+      if (actual.cierreCajaId)
+        throw new ConflictException(
+          'El pasaje pertenece a una caja ya cerrada',
+        );
 
       const salida = await this.lockSalida(em, actual.salidaId);
-      if (salida.estado !== EstadoSalida.Programado && user.rol !== 'Administrador') {
+      if (
+        salida.estado !== EstadoSalida.Programado &&
+        user.rol !== 'Administrador'
+      ) {
         throw new BadRequestException('La salida ya no está programada');
       }
       if (dto.numeroAsiento && dto.numeroAsiento !== actual.numeroAsiento) {
         this.validarAsiento(salida, dto.numeroAsiento);
-        if (await em.exists(Pasajero, { where: { salidaId: salida.id, numeroAsiento: dto.numeroAsiento } })) {
-          throw new ConflictException(`El asiento ${dto.numeroAsiento} ya está ocupado`);
+        if (
+          await em.exists(Pasajero, {
+            where: { salidaId: salida.id, numeroAsiento: dto.numeroAsiento },
+          })
+        ) {
+          throw new ConflictException(
+            `El asiento ${dto.numeroAsiento} ya está ocupado`,
+          );
         }
       }
       Object.assign(actual, dto, { updatedBy: user.id });
@@ -163,13 +197,27 @@ export class PasajerosService {
 
   /** Anulación = soft delete (se conserva para auditoría). */
   async anular(id: number, motivo: string | undefined, user: AuthUser) {
-    const p = await this.repo.findOne({ where: { id }, relations: { salida: true } });
+    const p = await this.repo.findOne({
+      where: { id },
+      relations: { salida: true },
+    });
     if (!p) throw new NotFoundException('Pasaje no encontrado');
-    if (p.cierreCajaId) throw new ConflictException('El pasaje pertenece a una caja ya cerrada y no puede anularse');
-    if (p.salida!.estado !== EstadoSalida.Programado && user.rol !== 'Administrador') {
-      throw new BadRequestException('La salida ya no está programada; solo un administrador puede anular');
+    if (p.cierreCajaId)
+      throw new ConflictException(
+        'El pasaje pertenece a una caja ya cerrada y no puede anularse',
+      );
+    if (
+      p.salida!.estado !== EstadoSalida.Programado &&
+      user.rol !== 'Administrador'
+    ) {
+      throw new BadRequestException(
+        'La salida ya no está programada; solo un administrador puede anular',
+      );
     }
-    await this.repo.update(id, { updatedBy: user.id, motivoAnulacion: motivo ?? null });
+    await this.repo.update(id, {
+      updatedBy: user.id,
+      motivoAnulacion: motivo ?? null,
+    });
     await this.repo.softDelete(id);
     this.events.emit('salida:asientos', { salidaId: p.salidaId });
     return { ok: true };
@@ -179,7 +227,12 @@ export class PasajerosService {
   async ticketEscPos(id: number, columnas = 32) {
     const p = await this.findOne(id);
     const e = new EscPos(columnas);
-    e.align('center').bold(true).size(true).text('BOLETO').size(false).bold(false);
+    e.align('center')
+      .bold(true)
+      .size(true)
+      .text('BOLETO')
+      .size(false)
+      .bold(false);
     e.text(`${p.salida!.ruta!.origen} - ${p.salida!.ruta!.destino}`).line();
     e.align('left');
     e.pair('Salida:', p.salida!.fechaHoraProgramada.toLocaleString('es-BO'));
@@ -188,7 +241,10 @@ export class PasajerosService {
     e.text(`Pasajero: ${p.nombrePasajero}`);
     e.text(`CI: ${p.documentoIdentidad}`);
     if (p.paradaDestino) e.text(`Baja en: ${p.paradaDestino}`);
-    e.line().pair('TOTAL Bs', p.montoPago.toFixed(2)).pair('Pago:', p.metodoPago).line();
+    e.line()
+      .pair('TOTAL Bs', p.montoPago.toFixed(2))
+      .pair('Pago:', p.metodoPago)
+      .line();
     e.align('center').qr(`PAS-${p.id}-${p.salidaId}-${p.numeroAsiento}`, 5);
     e.text(`Boleto #${p.id}`).cut();
     return e.build();

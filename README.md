@@ -11,13 +11,13 @@ Sistema web de escritorio para automatizar el **transporte interprovincial de pa
 | **Encomiendas** | Registro con remitente/destinatario, guía única `ENC-AAAA-NNNN`, etiqueta con QR, cobro **Pagado en origen** o **Contra entrega**, asignación a salida, seguimiento de estados. |
 | **Entrega en destino** | Búsqueda por escaneo de QR (pistola USB/cámara), CI o teléfono; **obliga a cobrar antes de entregar** si es contra entrega. |
 | **Pagos QR** | Generación del QR en pantalla, **webhook firmado (HMAC-SHA256)** y confirmación automática por WebSocket sin recargar. Proveedor `mock` para pruebas y adaptador HTTP para su banco. |
-| **WhatsApp** | 3 eventos de encomienda (salió / lista para retiro / entregada) + confirmación de pasaje, mediante **cola BullMQ + Redis** con reintentos. Proveedores: Meta Cloud API, Evolution API o `log`. |
+| **WhatsApp** | Los eventos y confirmaciones se registran, pero el envío está pausado temporalmente mientras Redis no se utilice. |
 | **Cierre de caja** | Totales de efectivo vs QR (pasajes y encomiendas), desglose por salida con marca de sobrecupo, **congelamiento** de transacciones y reporte imprimible. |
 | **Auditoría** | `created_at/by`, `updated_at/by` en tablas operativas y `deleted_at` (soft delete) en pasajeros. |
 
 ## Stack
 
-- **Backend:** NestJS 11 · TypeORM · PostgreSQL · JWT · BullMQ/Redis · Socket.IO · pdfkit · qrcode
+- **Backend:** NestJS 11 · TypeORM · PostgreSQL · JWT · Socket.IO · pdfkit · qrcode
 - **Frontend:** Vue 3 · Vite · TypeScript · Pinia · Vue Router · Tailwind CSS 4 · socket.io-client
 - **Infra:** Docker Compose · Nginx · Certbot
 
@@ -35,8 +35,8 @@ app-transport-main/
 Requisitos: Node 22+, Docker.
 
 ```bash
-# 1) Base de datos y Redis
-docker compose up -d db redis
+# 1) Base de datos
+docker compose up -d db
 
 # 2) Backend  → http://localhost:3000/api
 cd backend-transport
@@ -99,7 +99,7 @@ Producción: ponga `DB_SYNCHRONIZE=false` y gestione el esquema con migraciones 
 | `meta` | `WHATSAPP_META_PHONE_ID`, `WHATSAPP_META_TOKEN` |
 | `evolution` | `WHATSAPP_EVOLUTION_URL`, `_INSTANCE`, `_APIKEY` |
 
-Los mensajes se encolan en Redis y un worker los envía con 5 reintentos (backoff exponencial). El administrador puede revisar y **reintentar** envíos fallidos en *WhatsApp*.
+Por ahora los mensajes se guardan como fallidos con una explicación porque Redis y su cola están desactivados; el envío y los reintentos se podrán reactivar al volver a configurar Redis.
 Nota Meta Cloud API: los mensajes iniciados por la empresa fuera de la ventana de 24 h exigen **plantillas aprobadas**; si los usa, adapte `whatsapp.provider.ts` para enviar `type: "template"`.
 
 ## Flujo de encomiendas

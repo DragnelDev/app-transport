@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Camioneta } from './camioneta.entity';
+import { Camioneta } from './entities/camioneta.entity';
 import { CamionetasController } from './camionetas.controller';
 import { CamionetasService } from './camionetas.service';
 
